@@ -1,0 +1,25 @@
+\usepackage{currfile}
+
+\makeatletter
+\newcounter{secid}
+\newwrite\secidout
+\immediate\openout\secidout=\jobname.secid
+
+% Write: <secid>|<file>|<line>
+\newcommand{\writesecid}{%
+  \stepcounter{secid}%
+  \begingroup
+    \edef\temp{\thesecid|\currfilename|\the\inputlineno}%
+    \immediate\write\secidout{\temp}%
+  \endgroup
+}
+
+% Patch \addcontentsline to inject secid into .toc
+\let\orig@addcontentsline\addcontentsline
+\renewcommand{\addcontentsline}[3]{%
+  \writesecid
+  % prepend [secid=<n>] to the toc body
+  \orig@addcontentsline{#1}{#2}{[secid=\thesecid]#3}%
+}
+\makeatother
+
