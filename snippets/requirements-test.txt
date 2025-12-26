@@ -1,0 +1,11 @@
+# Core dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Optional dependencies used in the code
+pandas>=1.0.0
+networkx>=2.0
+plotly>=5.0.0
+
+# For testing LaTeX processing
+# Note: LaTeX packages would need to be installed separately if testing compilation
