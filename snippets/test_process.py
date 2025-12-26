@@ -4,7 +4,11 @@ Comprehensive pytest tests for LatexTocProcessor class.
 import pytest
 import tempfile
 from pathlib import Path
-from snippets.process import LatexTocProcessor, TocEntry, HAS_PANDAS
+
+try:
+    from process import LatexTocProcessor, TocEntry, HAS_PANDAS
+except ImportError:
+    from snippets.process import LatexTocProcessor, TocEntry, HAS_PANDAS
 
 
 @pytest.fixture

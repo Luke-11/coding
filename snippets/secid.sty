@@ -6,10 +6,12 @@
 \immediate\openout\secidout=\jobname.secid
 
 % Write: <secid>|<file>|<line>
+% Use \currfilepath which gives path relative to current working directory
+% (where LaTeX was run from, typically the main document directory)
 \newcommand{\writesecid}{%
   \stepcounter{secid}%
   \begingroup
-    \edef\temp{\thesecid|\currfilename|\the\inputlineno}%
+    \edef\temp{\thesecid|\currfilepath|\the\inputlineno}%
     \immediate\write\secidout{\temp}%
   \endgroup
 }

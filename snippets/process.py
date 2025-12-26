@@ -2,13 +2,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Set
 
 try:
     import pandas as pd
     HAS_PANDAS = True
 except (ImportError, ValueError, Exception):
     HAS_PANDAS = False
+
+from dependency_collector import DependencyEntry, LatexDependencyCollector
 
 @dataclass
 class TocEntry:
@@ -382,9 +384,10 @@ class LatexTocProcessor:
                          Can be absolute or relative to base_path.
         
         Returns:
-            A dictionary mapping secid (integer) to a tuple of (filename, line_number).
+            A dictionary mapping secid (integer) to a tuple of (file_path, line_number).
             Empty dictionary if the file doesn't exist or contains no valid entries.
-            The filename is stored as-is from the file (may be relative or absolute).
+            The file_path is stored as-is from the secid file (typically a relative path
+            like "chapters/ch01/ch01.tex" when using the updated secid.sty).
         
         Raises:
             UnicodeDecodeError: If the file cannot be read as UTF-8 (handled
@@ -495,7 +498,8 @@ class LatexTocProcessor:
             - 'number': Section number (str) or '*' for unnumbered sections
             - 'level': Section level (str, e.g., "chapter", "section")
             - 'page': Page number (str)
-            - 'file': Source filename (str) or None if not found
+            - 'file': Source file path relative to base_path (str) or None if not found.
+                     Example: "chapters/ch01/ch01.tex" or "chapters/ch02.tex"
             - 'line': Line number (int) or None if not found
             - 'label': Label name (str) or None if not found
             - 'title': Section title (str)
@@ -526,16 +530,101 @@ class LatexTocProcessor:
         # Convert to list of dicts
         data = []
         for e in self.entries:
+            # Preserve relative path if available, otherwise use filename
+            file_path = None
+            if e.file:
+                # Normalize path separators to forward slashes for consistency
+                file_path = e.file.replace('\\', '/')
+                # If it's an absolute path, try to make it relative to base_path
+                try:
+                    abs_path = Path(file_path)
+                    if abs_path.is_absolute():
+                        try:
+                            file_path = str(abs_path.relative_to(self.base_path)).replace('\\', '/')
+                        except ValueError:
+                            # If not relative to base_path, keep as-is
+                            pass
+                except Exception:
+                    # If path parsing fails, keep original
+                    pass
+            
             data.append({
                 'number': e.number if e.number else '*',
                 'level': e.level,
                 'page': e.page,
-                'file': Path(e.file).name if e.file else None,
+                'file': file_path,
                 'line': e.line,
                 'label': e.label_name,
                 'title': e.title
             })
         return data
+    
+    def process_filtered(self, toc_filename: str = "test.toc", secid_filename: str = "test.secid", 
+                        aux_filename: str = "test.aux", exclude_levels: Optional[List[str]] = None) -> List[Dict]:
+        """
+        Process all files and return structured data, optionally filtering out certain levels.
+        
+        This method is similar to process(), but allows filtering out specific section levels
+        (e.g., subsections) from the returned table.
+        
+        Args:
+            toc_filename: Name of the TOC file (relative to base_path). Defaults to "test.toc".
+            secid_filename: Name of the secid file (relative to base_path). Defaults to "test.secid".
+            aux_filename: Name of the aux file (relative to base_path). Defaults to "test.aux".
+            exclude_levels: List of level names to exclude (e.g., ['subsection']). 
+                          If None, defaults to ['subsection'].
+        
+        Returns:
+            A filtered list of dictionaries, each representing a section entry.
+        
+        Examples:
+            >>> processor = LatexTocProcessor("snippets")
+            >>> # Get only chapters and sections (exclude subsections)
+            >>> data = processor.process_filtered()
+            >>> # Get only chapters
+            >>> data = processor.process_filtered(exclude_levels=['section', 'subsection'])
+        """
+        if exclude_levels is None:
+            exclude_levels = ['subsection']
+        
+        all_data = self.process(toc_filename, secid_filename, aux_filename)
+        filtered_data = [e for e in all_data if e['level'] not in exclude_levels]
+        return filtered_data
+    
+    def split_project(self, output_dir: Path | str,
+                      toc_filename: str = "main.toc",
+                      secid_filename: str = "main.secid",
+                      aux_filename: str = "main.aux",
+                      include_subsections: bool = False) -> Dict[str, Path]:
+        """
+        Convenience method to split a LaTeX project using LatexProjectSplitter.
+        
+        This method processes the TOC files and then uses LatexProjectSplitter
+        to create separate files for each chapter and section.
+        
+        Args:
+            output_dir: Directory where output files will be created.
+            toc_filename: Name of the TOC file (relative to base_path).
+            secid_filename: Name of the secid file (relative to base_path).
+            aux_filename: Name of the aux file (relative to base_path).
+            include_subsections: If True, include subsections in the output. Default False.
+        
+        Returns:
+            Dictionary mapping section titles to output file paths.
+        
+        Examples:
+            >>> processor = LatexTocProcessor("../latex_split_test_project")
+            >>> output_files = processor.split_project("output")
+        """
+        # Import here to avoid circular imports
+        from snippets.splitter import LatexProjectSplitter
+        
+        # Process files to get the data
+        data = self.process(toc_filename, secid_filename, aux_filename)
+        
+        # Use the splitter
+        splitter = LatexProjectSplitter(self.base_path)
+        return splitter.split(data, output_dir, include_subsections=include_subsections)
     
     def to_dataframe(self, toc_filename: str = "test.toc", secid_filename: str = "test.secid", aux_filename: str = "test.aux"):
         """
@@ -625,5 +714,57 @@ class LatexTocProcessor:
                     print(' | '.join(f"{str(row.get(h, '')):<{col_widths[h]}}" for h in headers))
 
 if __name__ == "__main__":
-    processor = LatexTocProcessor("snippets")
+    import sys
+    
+    # Check for command line arguments
+    show_graph = "--graph" in sys.argv
+    show_graph_info = "--graph-info" in sys.argv
+    save_graph = "--save-graph" in sys.argv
+    
+    processor = LatexTocProcessor(".")
     processor.print_table()
+    print("--------------------------------")
+    processor=LatexTocProcessor("../latex_split_test_project")
+    toc_file = "main.toc"
+    secid_file = "main.secid"
+    aux_file = "main.aux"
+    processor.print_table(toc_filename=toc_file, secid_filename=secid_file, aux_filename=aux_file  )
+    
+    print("\n" + "="*50)
+    print("DEPENDENCY COLLECTION TEST")
+    print("="*50)
+    
+    collector = LatexDependencyCollector("../latex_split_test_project")
+    collector.print_table("main.tex")
+    
+    if show_graph_info:
+        print("\n" + "="*50)
+        print("DEPENDENCY GRAPH INFO")
+        print("="*50)
+        collector.print_graph_info("main.tex")
+    
+    if show_graph or save_graph:
+        print("\n" + "="*50)
+        print("DEPENDENCY GRAPH VISUALIZATION")
+        print("="*50)
+        
+        fig = collector.visualize_dependency_graph("main.tex")
+        if fig:
+            if save_graph:
+                success = collector.save_dependency_graph_separate(
+                    "main.tex",
+                    "dependency_graph.html",
+                    "dependency_graph.json"
+                )
+                if success:
+                    print("Graph saved as separate files: 'dependency_graph.html' and 'dependency_graph.json'")
+                else:
+                    print("Failed to save graph files")
+            else:
+                print("Graph created. Use --save-graph to save as separate HTML and JSON files.")
+                print("In a Jupyter notebook, you can display with: fig.show()")
+        else:
+            print("Failed to create graph visualization")
+    # tree= collector.get_dependency_tree("main.tex")
+    # for dep in tree:
+    #     print(dep)
